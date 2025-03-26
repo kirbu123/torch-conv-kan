@@ -1,9 +1,29 @@
 import torch
 import torch.nn as nn
 
-from kan_convs import KACNConv2DLayer
+from kan_convs import KACNConv2DLayer, ChebyKANLayer
 from kans import KACN
 from utils import L1
+
+
+class Simple1dDemoKACN(nn.Module):
+    def __init__(self, num_classes, input_channels):
+        super(Simple1dDemoKACN, self).__init__()
+        self.input_channels = input_channels
+        self.chebykan1 = ChebyKANLayer(28*28, 32, 4)
+        self.ln1 = nn.LayerNorm(32) # To avoid gradient vanishing caused by tanh
+        self.chebykan2 = ChebyKANLayer(32, 16, 4)
+        self.ln2 = nn.LayerNorm(16)
+        self.chebykan3 = ChebyKANLayer(16, num_classes, 4)
+
+    def forward(self, x):
+        x = x.view(-1, 28*28)  # Flatten the images
+        x = self.chebykan1(x)
+        x = self.ln1(x)
+        x = self.chebykan2(x)
+        x = self.ln2(x)
+        x = self.chebykan3(x)
+        return x
 
 
 class SimpleConvKACN(nn.Module):

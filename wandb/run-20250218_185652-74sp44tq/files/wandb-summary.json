@@ -1,0 +1,1 @@
+{"_runtime":39.998339564,"train_acc":0,"_timestamp":1.739894252328549e+09,"recall, macro":0.1718,"accuracy":0.1718,"auc, ovo":0.7437396055555556,"auc, ovr":0.7437396055555555,"lr":0.0001955,"f1_score, macro":0.11193978386296924,"f1_score, micro":0.1718,"train_acc_top5":0,"_step":391,"loss":2.2876157760620117,"accuracy, top5":0.6354,"recall, micro":0.1718,"_wandb":{"runtime":39}}

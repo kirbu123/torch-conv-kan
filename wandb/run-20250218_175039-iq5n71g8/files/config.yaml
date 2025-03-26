@@ -1,0 +1,79 @@
+_wandb:
+    value:
+        cli_version: 0.19.6
+        m: []
+        python_version: 3.11.5
+        t:
+            "1":
+                - 1
+                - 5
+                - 41
+                - 49
+                - 50
+                - 53
+                - 55
+                - 63
+                - 71
+            "2":
+                - 1
+                - 5
+                - 41
+                - 49
+                - 50
+                - 53
+                - 55
+                - 63
+                - 71
+            "3":
+                - 23
+                - 55
+            "4": 3.11.5
+            "5": 0.19.6
+            "8":
+                - 5
+            "12": 0.19.6
+            "13": linux-x86_64
+checkpointing_steps:
+    value: 5000
+checkpoints_total_limit:
+    value: 1000
+dataloader_num_workers:
+    value: 22
+epochs:
+    value: 250
+find_unused_parameters:
+    value: false
+gradient_accumulation_steps:
+    value: 1
+logging_dir:
+    value: ./runs/cifar10-reskalnet101-r/train_logs/
+loss:
+    value: '{''label_smoothing'': 0.05}'
+max_grad_norm:
+    value: 2
+max_train_steps:
+    value: none
+metrics:
+    value: '{''report_type'': ''classification''}'
+mixed_precision:
+    value: "no"
+model:
+    value: '{''groups'': 1, ''degree'': 4, ''width_scale'': 1, ''dropout'': 0.1, ''dropout_linear'': 0.5, ''l1_decay'': 5e-05, ''l2_activation_penalty'': 1e-05, ''l1_activation_penalty'': 1e-05, ''num_classes'': 10, ''is_moe'': False}'
+model_name:
+    value: reskalnet101_32p_cifar10
+optim:
+    value: '{''type'': ''adamW'', ''learning_rate'': 0.0005, ''adam_beta1'': 0.9, ''adam_beta2'': 0.999, ''adam_weight_decay'': 0.0001, ''adam_epsilon'': 1e-08, ''lr_warmup_steps'': 1000, ''lr_power'': 0.2, ''lr_end'': 1e-07, ''set_grads_to_none'': False}'
+output_dir:
+    value: ./runs/cifar10-reskalnet101-r/
+seed:
+    value: 42
+train_batch_size:
+    value: 128
+unpack_data:
+    value: true
+use_torch_compile:
+    value: false
+val_batch_size:
+    value: 128
+wandb:
+    value: '{''entity'': ''buka-smart-engines-service'', ''project_name'': ''cifar10-kan-convs''}'

@@ -1,0 +1,20 @@
+# @package _global_
+output_dir: "./runs/mnist-kacn/"
+logging_dir: "./runs/mnist-kacn/train_logs/"
+gradient_accumulation_steps: 1
+mixed_precision: 'no'
+find_unused_parameters: false
+dataset_name: 'MNIST'
+epochs: 150
+is_moe: false
+
+model:
+  name: 'WavKAN'
+
+optimizer:
+  lr: 1e-4
+  weight_decay: 1e-5
+
+wandb:
+  entity: 'buka-smart-engines-service'
+  project_name: 'mnist-kan-convs'

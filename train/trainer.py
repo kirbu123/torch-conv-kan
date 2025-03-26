@@ -106,7 +106,7 @@ def train_model(model, dataset_train, dataset_val, loss_func, cfg, dataset_test=
     wandb_params = {"entity": cfg.wandb.entity, }
     if "runname" in cfg.wandb:
         wandb_params = {"entity": cfg.wandb.entity, 'name': cfg.wandb.runname}
-
+    
     accelerator.init_trackers(
         project_name=cfg.wandb.project_name,
         config=dict(cfg),
@@ -231,7 +231,7 @@ def train_model(model, dataset_train, dataset_val, loss_func, cfg, dataset_test=
 
     if cfg.metrics.report_type == 'classification' or cfg.metrics.report_type == 'classification_minimum':
         metric_acc = partial(accuracy, task="multiclass", top_k=1, num_classes=cfg.model.num_classes)
-        metric_acc_top5 = partial(accuracy, task="multiclass", top_k=5, num_classes=cfg.model.num_classes)
+        metric_acc_top5 = partial(accuracy, task="multiclass", top_k=5, num_classes=cfg.model.num_classes) # WARNING!!!
         metric_acc, metric_acc_top5 = accelerator.prepare(metric_acc, metric_acc_top5)
 
     if cfg.metrics.report_type in ['segmentation', 'med_segmentation']:
@@ -393,7 +393,8 @@ def train_model(model, dataset_train, dataset_val, loss_func, cfg, dataset_test=
                         acc_t5 = metric_acc_top5(output[-1], labels)
                     else:
                         acc = metric_acc(output, labels)
-                        acc_t5 = metric_acc_top5(output, labels)
+                        # acc_t5 = metric_acc_top5(output, labels)
+                        acc_t5 = metric_acc(output, labels)
 
                     additional_metrics = {"train_acc": acc.detach().item(),
                                           "train_acc_top5": acc_t5.detach().item()}
@@ -496,7 +497,7 @@ def train_model(model, dataset_train, dataset_val, loss_func, cfg, dataset_test=
                     wandb_tracker.log({key_layer: [wandb.Image(image_layer), ]}, step=global_step)
                 logger.info(f"CAM Visualization logged")
             if save_checkpoints:
-                save_checkpoint_name = f"checkpoint-{epoch}-{cfg.tracking_metric}-{metrics[cfg.tracking_metric]}"
+                save_checkpoint_name = f"checkpoint-{epoch}"
 
                 save_path = os.path.join(cfg.output_dir, save_checkpoint_name)
                 accelerator.save_state(save_path)

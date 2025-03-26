@@ -35,7 +35,9 @@ def main(cfg):
     model = reskalnet_18x32p(3, 10, groups=cfg.model.groups, degree=cfg.model.degree, width_scale=cfg.model.width_scale,
                              dropout=cfg.model.dropout, l1_decay=cfg.model.l1_decay,
                              dropout_linear=cfg.model.dropout_linear)
-    summary(model, (64, 3, 32, 32), device='cpu')
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    summary(model, (64, 3, 32, 32), device=device)
+    print('END OF SUMMARY DECRICPTION, DATALOAD...')
     dataset_train, dataset_test = get_data()
     loss_func = nn.CrossEntropyLoss(label_smoothing=cfg.loss.label_smoothing)
 

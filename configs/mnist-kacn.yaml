@@ -1,0 +1,57 @@
+# @package _global_
+output_dir: "./runs/mnist-kacn/"
+logging_dir: "./runs/mnist-kacn/train_logs/"
+model_name: "mnist-kacn"
+gradient_accumulation_steps: 1
+mixed_precision: 'no'
+epochs: 50 # 250 -> 50
+train_batch_size: 128
+val_batch_size: 128
+dataloader_num_workers: 22
+use_mixup: true # WARNING!!!
+tracking_metric: 
+seed: 42
+
+max_train_steps: none
+
+max_grad_norm: 2.
+
+use_torch_compile: false
+unpack_data: true
+
+checkpointing_steps: 5000
+checkpoints_total_limit: 1000
+find_unused_parameters: false
+
+metrics:
+  report_type: 'classification'
+
+model:
+  degree: 6
+  groups: 4
+  dropout: 0.25
+  dropout_linear: 0.5
+  l1_activation_penalty: 0.0
+  l2_activation_penalty: 0.0
+  degree_out: 1
+  num_classes: 10
+  is_moe: false
+
+optim:
+  type: 'adamW'
+  learning_rate: 5e-4
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_weight_decay: 1e-4
+  adam_epsilon: 1e-8
+  lr_warmup_steps: 1000
+  lr_power: 0.2
+  lr_end: 1e-7
+  set_grads_to_none: false
+
+wandb:
+  entity: 'buka-smart-engines-service'
+  project_name: 'mnist-kan-convs'
+
+loss:
+  label_smoothing: 0.05

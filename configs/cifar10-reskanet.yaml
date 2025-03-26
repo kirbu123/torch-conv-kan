@@ -4,10 +4,12 @@ logging_dir: "./runs/cifar10-reskalnet101-r/train_logs/"
 model_name: "reskalnet101_32p_cifar10"
 gradient_accumulation_steps: 1
 mixed_precision: 'no'
-epochs: 250
+epochs: 50 # 250 -> 50
 train_batch_size: 128
 val_batch_size: 128
 dataloader_num_workers: 22
+use_mixup: true
+tracking_metric: 
 seed: 42
 
 max_train_steps: none
@@ -49,7 +51,7 @@ optim:
   set_grads_to_none: false
 
 wandb:
-  entity: 'add your entity'
+  entity: 'buka-smart-engines-service'
   project_name: 'cifar10-kan-convs'
 
 loss:

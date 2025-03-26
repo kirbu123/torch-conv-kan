@@ -1,6 +1,9 @@
 import json
 import os
 import time
+import hydra
+
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -11,9 +14,18 @@ from torchvision.transforms import v2
 from torchvision.transforms.autoaugment import AutoAugmentPolicy
 from tqdm import tqdm
 
+import wandb
+
+from accelerate import Accelerator
+from accelerate import DistributedDataParallelKwargs
+from accelerate.logging import get_logger
+from accelerate.utils import ProjectConfiguration, set_seed
+
+from omegaconf import OmegaConf
+
 from models import SimpleConvKALN, SimpleFastConvKAN, SimpleConvKAN, SimpleConv, EightSimpleConvKALN, \
     EightSimpleFastConvKAN, EightSimpleConvKAN, EightSimpleConv, SimpleConvKACN, EightSimpleConvKACN, \
-    SimpleConvKAGN, EightSimpleConvKAGN, SimpleConvWavKAN, EightSimpleConvWavKAN
+    SimpleConvKAGN, EightSimpleConvKAGN, SimpleConvWavKAN, EightSimpleConvWavKAN, Simple1dDemoKACN
 from kan_convs import KANConv2DLayer, KALNConv2DLayer, FastKANConv2DLayer, KACNConv2DLayer, KAGNConv2DLayer, WavKANConv2DLayer
 
 
@@ -23,9 +35,13 @@ class OutputHook(list):
     def __call__(self, module, input, output):
         self.append(output)
 
+def get_config(config_path="./configs/", config_name="mnist-conv.yaml"):
+    config_full_path = Path(config_path, config_name)
+    cfg = OmegaConf.load(config_full_path)
+    return cfg
 
 class Trainer:
-    def __init__(self, model_compiled, model, device, train_loader, val_loader, optimizer, scheduler, criterion,
+    def __init__(self, model_compiled, model, device, train_loader, val_loader, optimizer, scheduler, criterion, cfg,
                  l1_activation_penalty=0.0, l2_activation_penalty=0.0, is_moe=False):
         # Initialize the Trainer class with model, device, data loaders, optimizer, scheduler, and loss function
         self.model = model  # Neural network model to be trained and validated
@@ -41,10 +57,55 @@ class Trainer:
         self.scaler = torch.cuda.amp.GradScaler()
         self.output_hook = OutputHook()
         self.is_moe = is_moe
+
         for module in self.model.modules():
             if isinstance(module, (KANConv2DLayer, KALNConv2DLayer, FastKANConv2DLayer,
                                    KACNConv2DLayer, KAGNConv2DLayer, WavKANConv2DLayer)):
                 module.register_forward_hook(self.output_hook)
+        
+        self._init_wandb()
+
+    def _wandb_log(self, step: int, train_loss: float, train_accuracy: float, val_loss: float, val_accuracy: float) -> None:
+        if self.accelerator.is_main_process:
+            wandb_tracker = self.accelerator.get_tracker("wandb")
+
+            # force logging
+            wandb_tracker.log(
+                {
+                    "loss/train": train_loss,
+                    "accuracy/train": train_accuracy,
+                    "loss/val": val_loss,
+                    "accuracy/val": val_accuracy,
+                    "epoch": step
+                },
+                step=step
+            )
+
+
+    def _init_wandb(self):
+        logging_dir = Path(cfg.output_dir, cfg.logging_dir)
+
+        accelerator_project_config = ProjectConfiguration(project_dir=cfg.output_dir, logging_dir=logging_dir)
+        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=cfg.find_unused_parameters)
+        accelerator = Accelerator(
+            gradient_accumulation_steps=cfg.gradient_accumulation_steps,
+            mixed_precision=cfg.mixed_precision,
+            log_with="wandb",
+            project_config=accelerator_project_config,
+            kwargs_handlers=[ddp_kwargs]
+        )
+
+        wandb_params = {"entity": cfg.wandb.entity, }
+        if "runname" in cfg.wandb:
+            wandb_params = {"entity": cfg.wandb.entity, 'name': cfg.wandb.runname}
+
+        accelerator.init_trackers(
+            project_name=cfg.wandb.project_name,
+            config=dict(cfg),
+            init_kwargs={"wandb": wandb_params}
+        )
+
+        self.accelerator = accelerator
 
     def train_epoch(self):
         # Train the model for one epoch and return the average loss and accuracy
@@ -102,7 +163,7 @@ class Trainer:
                 if self.is_moe:
                     output, _ = self.model(images, train=False)  # Forward pass through the model
                 else:
-                    output = self.model(images)
+                    output = self.model(images)  # Forward pass through the model
                 # Accumulate validation loss and accuracy
                 val_loss += self.criterion(output, labels).item()
                 val_accuracy += (output.argmax(dim=1) == labels).float().mean().item()
@@ -118,6 +179,13 @@ class Trainer:
             train_loss, train_accuracy = self.train_epoch()
             val_loss, val_accuracy = self.validate_epoch()
             # Log metrics to Weights & Biases
+            self._wandb_log(
+                step=epoch,
+                train_loss=train_loss,
+                train_accuracy=train_accuracy,
+                val_loss=val_loss,
+                val_accuracy=val_accuracy
+            )
             # Update progress bar with current epoch loss and accuracy
             pbar.set_description(f"Epoch {epoch + 1} | Train Loss: {train_loss:.4f} | Val Accuracy: {val_accuracy:.4f}")
             self.scheduler.step()  # Update learning rate based on the scheduler
@@ -158,12 +226,19 @@ def quantize_and_evaluate(model, val_loader, criterion, save_path):
     return quantized_val_loss / len(val_loader), quantized_val_accuracy / len(val_loader), evaluation_time
 
 
-def train_and_validate(model, bs, epochs=15, dataset_name='MNIST', model_save_dir="./models",
-                       l1_activation_penalty=0.0, l2_activation_penalty=0.0, is_moe=False
-                       ):
+def train_and_validate(model, bs, cfg, model_save_dir="./models",
+                       l1_activation_penalty=0.0, l2_activation_penalty=0.0):
+
     # Function to train, validate, quantize the model, and evaluate the quantized model
     # Define the transformations for the datasets
     # Load and transform the MNIST training dataset
+
+    epochs = cfg.epochs
+    dataset_name = cfg.dataset_name
+    is_moe = cfg.is_moe
+    lr = cfg.optimizer.lr
+    weight_decay = cfg.optimizer.weight_decay
+
     if dataset_name == 'MNIST':
         transform_train = v2.Compose([
             v2.RandomAffine(degrees=20, translate=(0.1, 0.1), scale=(0.9, 1.1)),
@@ -218,6 +293,7 @@ def train_and_validate(model, bs, epochs=15, dataset_name='MNIST', model_save_di
         # Load and transform the CIFAR100 validation dataset
         valset = torchvision.datasets.CIFAR100(root="./data", train=False, download=True, transform=transform_test)
         # Create DataLoaders for training and validation datasets
+
     trainloader = DataLoader(trainset, batch_size=bs, shuffle=True, num_workers=12)
     valloader = DataLoader(valset, batch_size=bs, shuffle=False, num_workers=12)
 
@@ -228,7 +304,7 @@ def train_and_validate(model, bs, epochs=15, dataset_name='MNIST', model_save_di
     # model_compiled = torch.compile(model)
 
     # Set up the optimizer with specified parameters
-    optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
+    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
     # Define the learning rate scheduler
     scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.975)
@@ -236,9 +312,10 @@ def train_and_validate(model, bs, epochs=15, dataset_name='MNIST', model_save_di
     criterion = nn.CrossEntropyLoss()
 
     # Initialize the Trainer and train the model
-    trainer = Trainer(model, model, device, trainloader, valloader, optimizer, scheduler, criterion,
+    trainer = Trainer(model, model, device, trainloader, valloader, optimizer, scheduler, criterion, cfg=cfg,
                       l1_activation_penalty=l1_activation_penalty, l2_activation_penalty=l2_activation_penalty,
                       is_moe=is_moe)
+
     train_accuracies, val_accuracies = trainer.fit(epochs)
 
     # Ensure the directory for saving models exists
@@ -299,8 +376,12 @@ def get_kagn_model(num_classes, input_channels):
 
 def get_kacn_model(num_classes, input_channels):
     return SimpleConvKACN([8 * 4, 16 * 4, 32 * 4, 64 * 4], num_classes=num_classes, input_channels=input_channels,
-                          degree=6, groups=4, dropout=0.25, dropout_linear=0.5, l1_penalty=0.00000,
+                          degree=3, groups=4, dropout=0.25, dropout_linear=0.5, l1_penalty=0.00000,
                           degree_out=1)
+
+
+def get_kacn_1d_demo_model(num_classes, input_channels):
+    return Simple1dDemoKACN(num_classes=num_classes, input_channels=input_channels)
 
 
 def get_wavkan_model(num_classes, input_channels):
@@ -368,44 +449,40 @@ def get_8simple_conv_model(num_classes, input_channels):
 
 
 if __name__ == '__main__':
-    for dataset_name in ['MNIST', ]:
-        # for dataset_name in ['MNIST', 'CIFAR10', 'CIFAR100']:
-        #     for model_name in ['WavKAN8', 'KAN', "KALN", "FastKAN", 'KACN', 'KAGN', 'WavKAN', "Vanilla",
-        #                        'KAN8', "KALN8", "FastKAN8", "KACN8", 'KAGN8', "Vanilla8"]:
-        #         for dataset_name in ['MNIST', 'CIFAR10', 'CIFAR100']:
-        for model_name in ['KACN', ]:
-            folder_to_save = os.path.join('experiments_v3', '_'.join([model_name.lower(), dataset_name.lower()]))
-            num_classes = 100 if dataset_name == 'CIFAR100' else 10
-            input_channels = 1 if dataset_name == 'MNIST' else 3
-            bs = 64 if model_name in ['WavKAN', 'WavKAN8'] else 128
-            if model_name == 'KAN':
-                kan_model = get_kan_model(num_classes, input_channels)
-            elif model_name == 'KALN':
-                kan_model = get_kaln_model(num_classes, input_channels)
-            elif model_name == 'KAGN':
-                kan_model = get_kagn_model(num_classes, input_channels)
-            elif model_name == 'KACN':
-                kan_model = get_kacn_model(num_classes, input_channels)
-            elif model_name == 'FastKAN':
-                kan_model = get_fast_kan_model(num_classes, input_channels)
-            elif model_name == 'WavKAN':
-                kan_model = get_wavkan_model(num_classes, input_channels)
-            elif model_name == 'KAN8':
-                kan_model = get_8kan_model(num_classes, input_channels)
-            elif model_name == 'KALN8':
-                kan_model = get_8kaln_model(num_classes, input_channels)
-            elif model_name == 'KAGN8':
-                kan_model = get_8kagn_model(num_classes, input_channels)
-            elif model_name == 'KACN8':
-                kan_model = get_8kacn_model(num_classes, input_channels)
-            elif model_name == 'FastKAN8':
-                kan_model = get_8fast_kan_model(num_classes, input_channels)
-            elif model_name == 'WavKAN8':
-                kan_model = get_8wavkan_model(num_classes, input_channels)
-            elif model_name == 'Vanilla':
-                kan_model = get_simple_conv_model(num_classes, input_channels)
-            else:
-                kan_model = get_8simple_conv_model(num_classes, input_channels)
-            train_and_validate(kan_model, bs, epochs=150,
-                               dataset_name=dataset_name,
-                               model_save_dir=folder_to_save)  # Call the function to train and evaluate the model
+    cfg = get_config()
+    model_name = cfg.model.name
+    folder_to_save = os.path.join('experiments_v3', '_'.join([model_name.lower(), model_name.lower()]))
+    num_classes = 100 if cfg.dataset_name == 'CIFAR100' else 10
+    input_channels = 1 if cfg.dataset_name == 'MNIST' else 3
+    bs = 64 if model_name in ['WavKAN', 'WavKAN8'] else 128
+    if model_name == 'KAN':
+        kan_model = get_kan_model(num_classes, input_channels)
+    elif model_name == 'KALN':
+        kan_model = get_kaln_model(num_classes, input_channels)
+    elif model_name == 'KAGN':
+        kan_model = get_kagn_model(num_classes, input_channels)
+    elif model_name == 'KACN':
+        kan_model = get_kacn_model(num_classes, input_channels)
+    elif model_name == 'KACNDemo':
+        kan_model = get_kacn_1d_demo_model(num_classes, input_channels)
+    elif model_name == 'FastKAN':
+        kan_model = get_fast_kan_model(num_classes, input_channels)
+    elif model_name == 'WavKAN':
+        kan_model = get_wavkan_model(num_classes, input_channels)
+    elif model_name == 'KAN8':
+        kan_model = get_8kan_model(num_classes, input_channels)
+    elif model_name == 'KALN8':
+        kan_model = get_8kaln_model(num_classes, input_channels)
+    elif model_name == 'KAGN8':
+        kan_model = get_8kagn_model(num_classes, input_channels)
+    elif model_name == 'KACN8':
+        kan_model = get_8kacn_model(num_classes, input_channels)
+    elif model_name == 'FastKAN8':
+        kan_model = get_8fast_kan_model(num_classes, input_channels)
+    elif model_name == 'WavKAN8':
+        kan_model = get_8wavkan_model(num_classes, input_channels)
+    elif model_name == 'Vanilla':
+        kan_model = get_simple_conv_model(num_classes, input_channels)
+    else:
+        kan_model = get_8simple_conv_model(num_classes, input_channels)
+    train_and_validate(model=kan_model, bs=bs, cfg=cfg, model_save_dir=folder_to_save)  # Call the function to train and evaluate the model

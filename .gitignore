@@ -9,6 +9,9 @@ __pycache__/
 # PyTorch model checkpoints
 *.pth
 
+# wandb
+wandb/
+
 # Distribution / packaging
 .Python
 build/
